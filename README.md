@@ -33,9 +33,15 @@ inotify                                  2496541                   inotifywatch 
 inotify                                  2496541                   inotifywatch                             2510588                   touch                                   134217736                abcd
 ```
 
-134217760 = 0x08000020 = `FS_OPEN | FS_EVENT_ON_CHILD`
-134217732 = 0x08000004 = `FS_ATTRIB | FS_EVENT_ON_CHILD`
-134217736 = 0x08000008 = `FS_CLOSE_WRITE | FS_EVENT_ON_CHILD`
+You can select the applications to monitor with `--tracer-pid=` and
+`--tracee-pid=`.
+
+The mask uses the same flags as inotify (`IN_ACCESS`, etc.) + some internal ones:
+```
+134217760 = 0x08000020 = FS_OPEN | FS_EVENT_ON_CHILD
+134217732 = 0x08000004 = FS_ATTRIB | FS_EVENT_ON_CHILD
+134217736 = 0x08000008 = FS_CLOSE_WRITE | FS_EVENT_ON_CHILD
+```
 
 ## Requirements
 
