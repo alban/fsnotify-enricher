@@ -1,3 +1,5 @@
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/fsnotify-enricher)](https://artifacthub.io/packages/search?repo=fsnotify-enricher)
+
 # fsnotify-enricher
 
 fsnotify-enricher is a [gadget from Inspektor
