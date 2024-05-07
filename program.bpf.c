@@ -34,7 +34,9 @@ struct enriched_event {
   __u32 fa_mask;
   __u32 fa_pid;
 
+  __s32 i_wd;
   __u32 i_mask;
+  __u32 i_cookie;
 
   __u8 name[PATH_MAX];
 };
@@ -90,7 +92,9 @@ struct event {
   __u32 fa_mask;
   __u32 fa_pid;
 
+  __s32 i_wd;
   __u32 i_mask;
+  __u32 i_cookie;
 
   __u8 name[PATH_MAX];
 };
@@ -168,7 +172,9 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
     switch (ee->type) {
     case inotify:
       ine = container_of(event, struct inotify_event_info, fse);
+      ee->i_wd = BPF_CORE_READ(ine, wd);
       ee->i_mask = BPF_CORE_READ(ine, mask);
+      ee->i_cookie = BPF_CORE_READ(ine, sync_cookie);
 
       name_len = BPF_CORE_READ(ine, name_len);
       if (name_len < 0)
@@ -259,7 +265,9 @@ int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *ret) {
     event->fa_mask = ee->fa_mask;
     event->fa_pid = ee->fa_pid;
 
+    event->i_wd = ee->i_wd;
     event->i_mask = ee->i_mask;
+    event->i_cookie = ee->i_cookie;
 
     bpf_probe_read_kernel_str(event->name, PATH_MAX, ee->name);
   }

@@ -98,6 +98,18 @@ structs:
         width: 16
         alignment: left
         ellipsis: end
+    - name: i_wd
+      description: 'TODO: Fill field description'
+      attributes:
+        width: 11
+        alignment: left
+        ellipsis: end
+    - name: i_cookie
+      description: 'TODO: Fill field description'
+      attributes:
+        width: 10
+        alignment: left
+        ellipsis: end
 ebpfParams:
   tracee_pid:
     key: tracee-pid
