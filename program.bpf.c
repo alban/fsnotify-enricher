@@ -21,6 +21,15 @@ enum type {
   dnotify,
   inotify,
   fanotify,
+  fa_resp,
+};
+
+enum fa_response {
+  na = 0,
+  allow = 0x01,    // FAN_ALLOW
+  deny = 0x02,     // FAN_DENY
+  interrupted = 3, // tracee interrupted (state != FAN_EVENT_ANSWERED)
+  // FAN_AUDIT and FAN_INFO not handled
 };
 
 struct enriched_event {
@@ -31,7 +40,7 @@ struct enriched_event {
   __u8 comm[TASK_COMM_LEN];
   gadget_mntns_id mntns_id;
 
-  __u32 group_priority;
+  __u32 prio;
 
   __u32 fa_type;
   __u32 fa_mask;
@@ -99,13 +108,14 @@ struct event {
   __u32 tracee_tid;
   char tracee_comm[TASK_COMM_LEN];
 
-  __u32 group_priority;
+  __u32 prio;
 
   enum fanotify_event_type fa_type;
   __u32 fa_mask;
   __u32 fa_pid;
   __u32 fa_flags;
   __u32 fa_f_flags;
+  enum fa_response fa_response;
 
   __s32 i_wd;
   __u32 i_mask;
@@ -198,7 +208,7 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
   bpf_get_current_comm(&ee->comm, sizeof(ee->comm));
   ee->mntns_id = gadget_get_mntns_id();
 
-  ee->group_priority = BPF_CORE_READ(group, priority);
+  ee->prio = BPF_CORE_READ(group, priority);
 
   if (type) {
     ee->type = *type;
@@ -254,6 +264,64 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
 SEC("kprobe/fsnotify_destroy_event")
 int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
                struct fsnotify_event *event) {
+  u64 pid_tgid;
+  enum type *type;
+  struct fanotify_event *fae;
+  struct fanotify_perm_event *fpe;
+  short unsigned int state;
+  __u32 fa_type;
+  struct event *gadget_event;
+
+  // handle fanotify perm responses
+  if (inotify_only)
+    goto out;
+
+  pid_tgid = bpf_get_current_pid_tgid();
+  if (tracee_pid && tracee_pid != pid_tgid >> 32)
+    goto out;
+
+  type = bpf_map_lookup_elem(&fsnotify_insert_event_ctx, &pid_tgid);
+  if (!type || *type != fanotify)
+    goto out;
+
+  fae = container_of(event, struct fanotify_event, fse);
+  fa_type = BPF_CORE_READ_BITFIELD_PROBED(fae, type);
+  if (fa_type != FANOTIFY_EVENT_TYPE_PATH_PERM)
+    goto out;
+
+  fpe = container_of(fae, struct fanotify_perm_event, fae);
+
+  gadget_event = gadget_reserve_buf(&events, sizeof(*gadget_event));
+  if (!gadget_event)
+    goto out;
+
+  gadget_event->type = fa_resp;
+  gadget_event->fa_type = fa_type;
+  gadget_event->prio = BPF_CORE_READ(group, priority);
+
+  gadget_event->timestamp = bpf_ktime_get_boot_ns();
+  gadget_event->tracee_mntns_id = gadget_get_mntns_id();
+  gadget_event->tracee_pid = pid_tgid >> 32;
+  gadget_event->tracee_tid = (u32)pid_tgid;
+  bpf_get_current_comm(&gadget_event->tracee_comm, sizeof(gadget_event->tracee_comm));
+  bpf_probe_read_kernel_str(gadget_event->name, PATH_MAX, get_path_str(&fpe->path));
+
+  gadget_event->fa_mask = BPF_CORE_READ(fae, mask);
+  gadget_event->fa_pid = BPF_CORE_READ(fae, pid, numbers[0].nr);
+  gadget_event->fa_flags = BPF_CORE_READ(group, fanotify_data.flags);
+  gadget_event->fa_f_flags = BPF_CORE_READ(group, fanotify_data.f_flags);
+
+  state = BPF_CORE_READ(fpe, state);
+  if (state == FAN_EVENT_ANSWERED) {
+    gadget_event->fa_response = BPF_CORE_READ(fpe, response);
+    gadget_event->fa_response &= allow|deny;
+  } else {
+    gadget_event->fa_response = interrupted;
+  }
+
+  gadget_submit_buf(ctx, &events, gadget_event, sizeof(*gadget_event));
+
+out:
   // This might be called for unrelated events. This is fine:
   // bpf_map_delete_elem would just ignore events that are not in the
   // map.
@@ -313,7 +381,7 @@ int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *ret) {
     event->tracee_tid = ee->tid;
     __builtin_memcpy(event->tracee_comm, ee->comm, TASK_COMM_LEN);
     event->tracee_mntns_id = ee->mntns_id;
-    event->group_priority = ee->group_priority;
+    event->prio = ee->prio;
 
     event->fa_type = ee->fa_type;
     event->fa_mask = ee->fa_mask;

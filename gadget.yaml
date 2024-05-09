@@ -80,7 +80,7 @@ structs:
     - name: name
       description: filename within a watched directory
       attributes:
-        width: 16
+        width: 20
         alignment: left
         ellipsis: end
     - name: i_wd
@@ -97,7 +97,7 @@ structs:
         width: 10
         alignment: left
         ellipsis: end
-    - name: group_priority
+    - name: prio
       description: 'fsnotify group priorities. Events are send in order from highest
         priority to lowest priority. 0: default, normal notifiers, no permissions.
         1: fanotify content based access control. 2: fanotify pre-content access.'
@@ -115,6 +115,12 @@ structs:
       description: event_f_flags from fanotify_init
       attributes:
         width: 10
+        alignment: left
+        ellipsis: end
+    - name: fa_response
+      description: 'response to a fanotify permission request: allow or deny'
+      attributes:
+        width: 5
         alignment: left
         ellipsis: end
 ebpfParams:
