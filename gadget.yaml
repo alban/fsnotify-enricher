@@ -1,14 +1,14 @@
-name: 'TODO: Fill the gadget name'
-description: 'TODO: Fill the gadget description'
-homepageURL: 'TODO: Fill the gadget homepage URL'
-documentationURL: 'TODO: Fill the gadget documentation URL'
-sourceURL: 'TODO: Fill the gadget source code URL'
+name: fsnotify-enricher
+description: Gadget enriching inotify or fanotify events
+homepageURL: https://github.com/alban/fsnotify-enricher
+documentationURL: https://github.com/alban/fsnotify-enricher
+sourceURL: https://github.com/alban/fsnotify-enricher
 tracers:
   fsnotify:
     mapName: events
-    structName: event
+    structName: gadget_event
 structs:
-  event:
+  gadget_event:
     fields:
     - name: timestamp
       description: Timestamp
@@ -65,7 +65,9 @@ structs:
         alignment: left
         ellipsis: end
     - name: fa_type
-      description: 'TODO: Fill field description'
+      description: 'Type of fanotify event: FANOTIFY_EVENT_TYPE_FID, FANOTIFY_EVENT_TYPE_FID_NAME,
+        FANOTIFY_EVENT_TYPE_PATH, FANOTIFY_EVENT_TYPE_PATH_PERM, FANOTIFY_EVENT_TYPE_OVERFLOW,
+        or FANOTIFY_EVENT_TYPE_FS_ERROR'
       attributes:
         width: 10
         alignment: left

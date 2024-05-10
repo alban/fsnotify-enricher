@@ -8,10 +8,10 @@
 #include <bpf/bpf_tracing.h>
 
 #include <gadget/buffer.h>
+#include <gadget/filesystem.h>
 #include <gadget/macros.h>
 #include <gadget/mntns_filter.h>
 #include <gadget/types.h>
-#include <gadget/filesystem.h>
 
 #define PATH_MAX 4096
 #define TASK_COMM_LEN 16
@@ -35,10 +35,15 @@ enum fa_response {
 struct enriched_event {
   enum type type;
 
-  __u32 pid;
-  __u32 tid;
-  __u8 comm[TASK_COMM_LEN];
-  gadget_mntns_id mntns_id;
+  __u32 tracee_pid;
+  __u32 tracee_tid;
+  __u8 tracee_comm[TASK_COMM_LEN];
+  gadget_mntns_id tracee_mntns_id;
+
+  __u32 tracer_pid;
+  __u32 tracer_tid;
+  __u8 tracer_comm[TASK_COMM_LEN];
+  gadget_mntns_id tracer_mntns_id;
 
   __u32 prio;
 
@@ -94,7 +99,7 @@ GADGET_PARAM(tracee_pid);
 GADGET_PARAM(inotify_only);
 GADGET_PARAM(fanotify_only);
 
-struct event {
+struct gadget_event {
   gadget_timestamp timestamp;
   enum type type;
 
@@ -110,15 +115,30 @@ struct event {
 
   __u32 prio;
 
-  enum fanotify_event_type fa_type;
+  // fsnotify masks are defined in an internal API, but duplicated in two user
+  // APIs with mostly the same values. A single u32 is used to define the event
+  // type but also flags. Some are internal API, some are public API.
+  //
+  // Internal flags are filtered before sending the mask to userspace:
+  // - inotify_mask_to_arg()
+  // - FANOTIFY_OUTGOING_EVENTS
+  //
+  // For detail, see:
+  // https://github.com/torvalds/linux/blob/v6.6/include/linux/fsnotify_backend.h#L31-L47
+  // https://github.com/torvalds/linux/blob/v6.6/include/uapi/linux/inotify.h#L29-L46
+  // https://github.com/torvalds/linux/blob/v6.6/include/uapi/linux/fanotify.h#L8-L33
+  //
+  // TODO: Print masks as string
   __u32 fa_mask;
+  __u32 i_mask;
+
+  enum fanotify_event_type fa_type;
   __u32 fa_pid;
   __u32 fa_flags;
   __u32 fa_f_flags;
   enum fa_response fa_response;
 
   __s32 i_wd;
-  __u32 i_mask;
   __u32 i_cookie;
 
   char name[PATH_MAX];
@@ -126,7 +146,7 @@ struct event {
 
 GADGET_TRACER_MAP(events, 1024 * 256);
 
-GADGET_TRACER(fsnotify, events, event);
+GADGET_TRACER(fsnotify, events, gadget_event);
 
 // Probes for the tracees
 
@@ -203,10 +223,10 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
   if (!ee)
     return 0;
 
-  ee->pid = pid_tgid >> 32;
-  ee->tid = (u32)pid_tgid;
-  bpf_get_current_comm(&ee->comm, sizeof(ee->comm));
-  ee->mntns_id = gadget_get_mntns_id();
+  ee->tracee_pid = pid_tgid >> 32;
+  ee->tracee_tid = (u32)pid_tgid;
+  bpf_get_current_comm(&ee->tracee_comm, sizeof(ee->tracee_comm));
+  ee->tracee_mntns_id = gadget_get_mntns_id();
 
   ee->prio = BPF_CORE_READ(group, priority);
 
@@ -270,7 +290,8 @@ int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
   struct fanotify_perm_event *fpe;
   short unsigned int state;
   __u32 fa_type;
-  struct event *gadget_event;
+  struct gadget_event *gadget_event;
+  struct enriched_event *ee;
 
   // handle fanotify perm responses
   if (inotify_only)
@@ -300,11 +321,23 @@ int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
   gadget_event->prio = BPF_CORE_READ(group, priority);
 
   gadget_event->timestamp = bpf_ktime_get_boot_ns();
+
+  ee = bpf_map_lookup_elem(&enriched_fsnotify_events, &event);
+  if (ee) {
+    gadget_event->mntns_id = ee->tracer_mntns_id;
+    gadget_event->tracer_pid = ee->tracer_pid;
+    gadget_event->tracer_tid = ee->tracer_tid;
+    __builtin_memcpy(gadget_event->tracer_comm, ee->tracer_comm, TASK_COMM_LEN);
+  }
+
   gadget_event->tracee_mntns_id = gadget_get_mntns_id();
   gadget_event->tracee_pid = pid_tgid >> 32;
   gadget_event->tracee_tid = (u32)pid_tgid;
-  bpf_get_current_comm(&gadget_event->tracee_comm, sizeof(gadget_event->tracee_comm));
-  bpf_probe_read_kernel_str(gadget_event->name, PATH_MAX, get_path_str(&fpe->path));
+  bpf_get_current_comm(&gadget_event->tracee_comm,
+                       sizeof(gadget_event->tracee_comm));
+
+  bpf_probe_read_kernel_str(gadget_event->name, PATH_MAX,
+                            get_path_str(&fpe->path));
 
   gadget_event->fa_mask = BPF_CORE_READ(fae, mask);
   gadget_event->fa_pid = BPF_CORE_READ(fae, pid, numbers[0].nr);
@@ -314,7 +347,7 @@ int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
   state = BPF_CORE_READ(fpe, state);
   if (state == FAN_EVENT_ANSWERED) {
     gadget_event->fa_response = BPF_CORE_READ(fpe, response);
-    gadget_event->fa_response &= allow|deny;
+    gadget_event->fa_response &= allow | deny;
   } else {
     gadget_event->fa_response = interrupted;
   }
@@ -349,12 +382,42 @@ int BPF_KPROBE(ig_fa_pick_e, struct fsnotify_group *group) {
   return 0;
 }
 
+static __always_inline void
+prepare_ee_for_fa_perm(struct enriched_event *ee, struct fsnotify_event *event,
+                       struct gadget_event *gadget_event) {
+  u64 pid_tgid;
+  struct fanotify_event *fae;
+  struct fanotify_perm_event *fpe;
+  short unsigned int state;
+  __u32 fa_type;
+
+  if (inotify_only)
+    return;
+
+  pid_tgid = bpf_get_current_pid_tgid();
+
+  if (ee->type != fanotify)
+    return;
+
+  fae = container_of(event, struct fanotify_event, fse);
+  fa_type = BPF_CORE_READ_BITFIELD_PROBED(fae, type);
+  if (fa_type != FANOTIFY_EVENT_TYPE_PATH_PERM)
+    return;
+
+  fpe = container_of(fae, struct fanotify_perm_event, fae);
+
+  ee->tracer_pid = gadget_event->tracer_pid;
+  ee->tracer_tid = gadget_event->tracer_tid;
+  __builtin_memcpy(ee->tracer_comm, gadget_event->tracer_comm, TASK_COMM_LEN);
+  ee->tracer_mntns_id = gadget_event->mntns_id;
+}
+
 SEC("kretprobe/fsnotify_remove_first_event")
-int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *ret) {
+int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *event) {
   u64 pid_tgid;
   struct fsnotify_group **group;
   struct enriched_event *ee;
-  struct event *event;
+  struct gadget_event *gadget_event;
 
   // pid_tgid is the task owning the fsnotify fd
   pid_tgid = bpf_get_current_pid_tgid();
@@ -363,46 +426,51 @@ int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *ret) {
   if (!group)
     return 0;
 
-  event = gadget_reserve_buf(&events, sizeof(*event));
-  if (!event)
+  gadget_event = gadget_reserve_buf(&events, sizeof(*gadget_event));
+  if (!gadget_event)
     goto end;
 
-  /* event data */
-  event->timestamp = bpf_ktime_get_boot_ns();
-  event->mntns_id = gadget_get_mntns_id();
-  event->tracer_pid = pid_tgid >> 32;
-  event->tracer_tid = (u32)pid_tgid;
-  bpf_get_current_comm(&event->tracer_comm, sizeof(event->tracer_comm));
+  /* gadget_event data */
+  gadget_event->timestamp = bpf_ktime_get_boot_ns();
+  gadget_event->mntns_id = gadget_get_mntns_id();
+  gadget_event->tracer_pid = pid_tgid >> 32;
+  gadget_event->tracer_tid = (u32)pid_tgid;
+  bpf_get_current_comm(&gadget_event->tracer_comm,
+                       sizeof(gadget_event->tracer_comm));
 
-  ee = bpf_map_lookup_elem(&enriched_fsnotify_events, &ret);
+  ee = bpf_map_lookup_elem(&enriched_fsnotify_events, &event);
   if (ee) {
-    event->type = ee->type;
-    event->tracee_pid = ee->pid;
-    event->tracee_tid = ee->tid;
-    __builtin_memcpy(event->tracee_comm, ee->comm, TASK_COMM_LEN);
-    event->tracee_mntns_id = ee->mntns_id;
-    event->prio = ee->prio;
+    gadget_event->type = ee->type;
 
-    event->fa_type = ee->fa_type;
-    event->fa_mask = ee->fa_mask;
-    event->fa_pid = ee->fa_pid;
-    event->fa_flags = ee->fa_flags;
-    event->fa_f_flags = ee->fa_f_flags;
+    gadget_event->tracee_pid = ee->tracee_pid;
+    gadget_event->tracee_tid = ee->tracee_tid;
+    __builtin_memcpy(gadget_event->tracee_comm, ee->tracee_comm, TASK_COMM_LEN);
+    gadget_event->tracee_mntns_id = ee->tracee_mntns_id;
 
-    event->i_wd = ee->i_wd;
-    event->i_mask = ee->i_mask;
-    event->i_cookie = ee->i_cookie;
+    gadget_event->prio = ee->prio;
 
-    bpf_probe_read_kernel_str(event->name, PATH_MAX, ee->name);
+    gadget_event->fa_type = ee->fa_type;
+    gadget_event->fa_mask = ee->fa_mask;
+    gadget_event->fa_pid = ee->fa_pid;
+    gadget_event->fa_flags = ee->fa_flags;
+    gadget_event->fa_f_flags = ee->fa_f_flags;
+
+    gadget_event->i_wd = ee->i_wd;
+    gadget_event->i_mask = ee->i_mask;
+    gadget_event->i_cookie = ee->i_cookie;
+
+    bpf_probe_read_kernel_str(gadget_event->name, PATH_MAX, ee->name);
+
+    prepare_ee_for_fa_perm(ee, event, gadget_event);
   } else {
     if (inotify_only || fanotify_only) {
-      gadget_discard_buf(event);
+      gadget_discard_buf(gadget_event);
       goto end;
     }
   }
 
-  /* emit event */
-  gadget_submit_buf(ctx, &events, event, sizeof(*event));
+  /* emit gadget_event */
+  gadget_submit_buf(ctx, &events, gadget_event, sizeof(*gadget_event));
 
 end:
   bpf_map_delete_elem(&fsnotify_remove_first_event_ctx, &pid_tgid);

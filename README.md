@@ -55,27 +55,27 @@ docker run -ti --rm busybox date
 
 The fsnotify-enricher gadget can observe and enrich the fanotify events in the following way:
 ```
-$ sudo -E ig run ghcr.io/alban/fsnotify-enricher:latest --verify-image=false --fanotify-only --fields=tracer_comm,tracee_comm,prio,name,fa_response_str,type_str,fa_type_str,type_str
+$ sudo -E ig run ghcr.io/alban/fsnotify-enricher:latest --verify-image=false --fanotify-only --fields=type_str,fa_type_str,fa_response_str,tracer_comm,tracee_comm,prio,name
 INFO[0000] Experimental features enabled
 WARN[0000] you set --verify-image=false, image will not be verified
 WARN[0001] you set --verify-image=false, image will not be verified
-TRACER_COMM TRACEE_COMM     GROUP_PRIORITY NAME                                 FA_RESPONSE_STR TYPE_STR FA_TYPE_STR                   TYPE_STR
-ig          containerd-shim 1              /usr/bin/runc                        na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            containerd-shim 0              /usr/bin/runc                        allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          containerd-shim 1              /usr/bin/runc                        na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            containerd-shim 0              /usr/bin/runc                        allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          runc            1              /usr/bin/runc                        na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            runc            0              /usr/bin/runc                        allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          runc            1              /usr/bin/runc                        na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            runc            0              /usr/bin/runc                        allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          exe             1              runc                                 na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            exe             0              runc                                 allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          exe             1              runc                                 na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            exe             0              runc                                 allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          containerd-shim 1              /run/containerd/io.containerd.runti… na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            containerd-shim 0              /run/containerd/io.containerd.runti… allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
-ig          containerd-shim 1              /run/containerd/io.containerd.runti… na              fanotify FANOTIFY_EVENT_TYPE_PATH_PERM fanotify
-            containerd-shim 0              /run/containerd/io.containerd.runti… allow           fa_resp  FANOTIFY_EVENT_TYPE_PATH_PERM fa_resp
+TYPE_STR  FA_TYPE_STR                    FA_RESPONSE_STR  TRACER_COMM  TRACEE_COMM      PRIO  NAME
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           containerd-shim  1     /usr/bin/runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           containerd-shim  1     /usr/bin/runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           containerd-shim  1     /usr/bin/runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           containerd-shim  1     /usr/bin/runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           runc             1     /usr/bin/runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           runc             1     /usr/bin/runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           runc             1     /usr/bin/runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           runc             1     /usr/bin/runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           exe              1     runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           exe              1     runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           exe              1     runc
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           exe              1     runc
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           containerd-shim  1     /run/containerd/io.containerd.runtime.v2.task/moby…
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           containerd-shim  1     /run/containerd/io.containerd.runtime.v2.task/moby…
+fanotify  FANOTIFY_EVENT_TYPE_PATH_PERM  na               ig           containerd-shim  1     /run/containerd/io.containerd.runtime.v2.task/moby…
+fa_resp   FANOTIFY_EVENT_TYPE_PATH_PERM  allow            ig           containerd-shim  1     /run/containerd/io.containerd.runtime.v2.task/moby…
 ```
 
 ## Parameters
