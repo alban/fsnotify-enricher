@@ -56,17 +56,24 @@ struct enriched_event {
   __s32 i_wd;
   __u32 i_mask;
   __u32 i_cookie;
+  __u32 i_ino;
+  __u32 i_ino_dir;
 
   __u8 name[PATH_MAX];
 };
 static const struct enriched_event empty_enriched_event = {};
 
 // context for the caller of fsnotify_insert_event
+struct fsnotify_insert_event_value {
+  enum type type;
+  __u32 i_ino;
+  __u32 i_ino_dir;
+};
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __uint(max_entries, 64);
   __type(key, u64); // tgid_pid
-  __type(value, enum type);
+  __type(value, struct fsnotify_insert_event_value);
 } fsnotify_insert_event_ctx SEC(".maps");
 
 // context for kprobe/kretprobe fsnotify_remove_first_event
@@ -140,6 +147,8 @@ struct gadget_event {
 
   __s32 i_wd;
   __u32 i_cookie;
+  __u32 i_ino;
+  __u32 i_ino_dir;
 
   char name[PATH_MAX];
 };
@@ -151,12 +160,18 @@ GADGET_TRACER(fsnotify, events, gadget_event);
 // Probes for the tracees
 
 SEC("kprobe/inotify_handle_inode_event")
-int BPF_KPROBE(inotify_handle_inode_event_e) {
+int BPF_KPROBE(inotify_handle_inode_event_e, struct fsnotify_mark *inode_mark,
+               u32 mask, struct inode *inode, struct inode *dir,
+               const struct qstr *name, u32 cookie) {
   if (!fanotify_only) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
-    enum type type = inotify;
+    struct fsnotify_insert_event_value value = {
+        .type = inotify,
+        .i_ino = BPF_CORE_READ(inode, i_ino),
+        .i_ino_dir = BPF_CORE_READ(dir, i_ino),
+    };
     // context for fsnotify_insert_event
-    bpf_map_update_elem(&fsnotify_insert_event_ctx, &pid_tgid, &type, 0);
+    bpf_map_update_elem(&fsnotify_insert_event_ctx, &pid_tgid, &value, 0);
   }
   return 0;
 }
@@ -174,9 +189,9 @@ SEC("kprobe/fanotify_handle_event")
 int BPF_KPROBE(fanotify_handle_event_e) {
   if (!inotify_only) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
-    enum type type = fanotify;
+    struct fsnotify_insert_event_value value = {.type = fanotify};
     // context for fsnotify_insert_event
-    bpf_map_update_elem(&fsnotify_insert_event_ctx, &pid_tgid, &type, 0);
+    bpf_map_update_elem(&fsnotify_insert_event_ctx, &pid_tgid, &value, 0);
   }
   return 0;
 }
@@ -195,7 +210,7 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
                struct fsnotify_event *event) {
   u64 pid_tgid;
   struct enriched_event *ee;
-  enum type *type;
+  struct fsnotify_insert_event_value *value;
   struct fanotify_event *fae;
   struct inotify_event_info *ine;
   int name_len;
@@ -206,11 +221,11 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
   if (tracee_pid && tracee_pid != pid_tgid >> 32)
     return 0;
 
-  type = bpf_map_lookup_elem(&fsnotify_insert_event_ctx, &pid_tgid);
-  if (type) {
-    if (inotify_only && *type != inotify)
+  value = bpf_map_lookup_elem(&fsnotify_insert_event_ctx, &pid_tgid);
+  if (value) {
+    if (inotify_only && value->type != inotify)
       return 0;
-    if (fanotify_only && *type != fanotify)
+    if (fanotify_only && value->type != fanotify)
       return 0;
   } else {
     if (inotify_only || fanotify_only)
@@ -230,8 +245,8 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
 
   ee->prio = BPF_CORE_READ(group, priority);
 
-  if (type) {
-    ee->type = *type;
+  if (value) {
+    ee->type = value->type;
 
     ee->fa_type = -1;
 
@@ -241,6 +256,8 @@ int BPF_KPROBE(fsnotify_insert_event_e, struct fsnotify_group *group,
       ee->i_wd = BPF_CORE_READ(ine, wd);
       ee->i_mask = BPF_CORE_READ(ine, mask);
       ee->i_cookie = BPF_CORE_READ(ine, sync_cookie);
+      ee->i_ino = value->i_ino;
+      ee->i_ino_dir = value->i_ino_dir;
 
       name_len = BPF_CORE_READ(ine, name_len);
       if (name_len < 0)
@@ -285,7 +302,7 @@ SEC("kprobe/fsnotify_destroy_event")
 int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
                struct fsnotify_event *event) {
   u64 pid_tgid;
-  enum type *type;
+  struct fsnotify_insert_event_value *value;
   struct fanotify_event *fae;
   struct fanotify_perm_event *fpe;
   short unsigned int state;
@@ -301,8 +318,8 @@ int BPF_KPROBE(fsnotify_destroy_event, struct fsnotify_group *group,
   if (tracee_pid && tracee_pid != pid_tgid >> 32)
     goto out;
 
-  type = bpf_map_lookup_elem(&fsnotify_insert_event_ctx, &pid_tgid);
-  if (!type || *type != fanotify)
+  value = bpf_map_lookup_elem(&fsnotify_insert_event_ctx, &pid_tgid);
+  if (!value || value->type != fanotify)
     goto out;
 
   fae = container_of(event, struct fanotify_event, fse);
@@ -458,6 +475,8 @@ int BPF_KRETPROBE(ig_fa_pick_x, struct fsnotify_event *event) {
     gadget_event->i_wd = ee->i_wd;
     gadget_event->i_mask = ee->i_mask;
     gadget_event->i_cookie = ee->i_cookie;
+    gadget_event->i_ino = ee->i_ino;
+    gadget_event->i_ino_dir = ee->i_ino_dir;
 
     bpf_probe_read_kernel_str(gadget_event->name, PATH_MAX, ee->name);
 
